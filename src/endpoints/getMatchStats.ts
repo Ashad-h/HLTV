@@ -83,7 +83,7 @@ export const getMatchStats =
     }
 
     const overview = getStatsOverview(m$)
-    const playerStats = getPlayerStats(m$, p$)
+    const playerStats = getPlayerStats(m$)
     const performanceOverview = getPerformanceOverview(p$)
 
     return {
