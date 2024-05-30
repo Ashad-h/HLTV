@@ -17,9 +17,9 @@ export interface PlayerStats {
   flashAssists: number
   deaths: number
   KAST?: number
-  killDeathsDifference: number
+  killDeathsDifference?: number
   ADR?: number
-  firstKillsDifference: number
+  firstKillsDifference?: number
   rating1?: number
   rating2?: number
 }
@@ -96,87 +96,79 @@ export interface FullMatchMapStats {
     team1: PlayerStats[]
     team2: PlayerStats[]
   }
-  performanceOverview: TeamsPerformanceOverview
+  performanceOverview?: TeamsPerformanceOverview
 }
 
 export const getMatchMapStats =
   (config: HLTVConfig) =>
-  async ({ id }: { id: number }): Promise<FullMatchMapStats> => {
-    const [m$, p$] = await Promise.all([
-      fetchPage(
+    async ({ id }: { id: number }): Promise<FullMatchMapStats> => {
+      const m$ = await fetchPage(
         `https://www.hltv.org/stats/matches/mapstatsid/${id}/-`,
         config.loadPage
-      ).then(HLTVScraper),
-      fetchPage(
-        `https://www.hltv.org/stats/matches/performance/mapstatsid/${id}/-`,
-        config.loadPage
-      ).then(HLTVScraper)
-    ])
+      ).then(HLTVScraper);
 
-    const matchId = m$('.match-page-link').attrThen('href', getIdAt(2))!
-    const halfsString = m$('.match-info-row .right').eq(0).text()
+      const matchId = m$('.match-page-link').attrThen('href', getIdAt(2))!
+      const halfsString = m$('.match-info-row .right').eq(0).text()
 
-    const result = {
-      team1TotalRounds: m$('.team-left .bold').numFromText()!,
-      team2TotalRounds: m$('.team-right .bold').numFromText()!,
-      halfResults: halfsString
-        .match(/(?!\() \d+ : \d+ (?=\))/g)!
-        .map((x) => x.trim().split(' : '))
-        .map(([t1, t2]) => ({
-          team1Rounds: Number(t1),
-          team2Rounds: Number(t2)
-        }))
+      const result = {
+        team1TotalRounds: m$('.team-left .bold').numFromText()!,
+        team2TotalRounds: m$('.team-right .bold').numFromText()!,
+        halfResults: halfsString
+          .match(/(?!\() \d+ : \d+ (?=\))/g)!
+          .map((x) => x.trim().split(' : '))
+          .map(([t1, t2]) => ({
+            team1Rounds: Number(t1),
+            team2Rounds: Number(t2)
+          }))
+      }
+
+      const map = fromMapName(m$('.match-info-box').contents().eq(3).trimText()!)
+      const date = m$('.match-info-box span[data-time-format]').numFromAttr(
+        'data-unix'
+      )!
+
+      const team1 = {
+        id: m$('.team-left a').attrThen('href', getIdAt(3)),
+        name: m$('.team-left .team-logo').attr('title')
+      }
+
+      const team2 = {
+        id: m$('.team-right a').attrThen('href', getIdAt(3)),
+        name: m$('.team-right .team-logo').attr('title')
+      }
+
+      const event = {
+        id: Number(
+          m$('.match-info-box .text-ellipsis')
+            .first()
+            .attr('href')
+            .split('event=')
+            .pop()
+        ),
+        name: m$('.match-info-box .text-ellipsis').first().text()
+      }
+
+      const roundHistory = getRoundHistory(m$, team1, team2)
+      const overview = getStatsOverview(m$)
+      const playerStats = getPlayerStats(m$)
+
+      // TODO: kill matrix
+      // TODO: equipment value
+
+      return {
+        id,
+        matchId,
+        result,
+        map,
+        date,
+        team1,
+        team2,
+        event,
+        overview,
+        roundHistory,
+        playerStats
+      }
     }
-
-    const map = fromMapName(m$('.match-info-box').contents().eq(3).trimText()!)
-    const date = m$('.match-info-box span[data-time-format]').numFromAttr(
-      'data-unix'
-    )!
-
-    const team1 = {
-      id: m$('.team-left a').attrThen('href', getIdAt(3)),
-      name: m$('.team-left .team-logo').attr('title')
-    }
-
-    const team2 = {
-      id: m$('.team-right a').attrThen('href', getIdAt(3)),
-      name: m$('.team-right .team-logo').attr('title')
-    }
-
-    const event = {
-      id: Number(
-        m$('.match-info-box .text-ellipsis')
-          .first()
-          .attr('href')
-          .split('event=')
-          .pop()
-      ),
-      name: m$('.match-info-box .text-ellipsis').first().text()
-    }
-
-    const roundHistory = getRoundHistory(m$, team1, team2)
-    const overview = getStatsOverview(m$)
-    const playerStats = getPlayerStats(m$, p$)
-    const performanceOverview = getPerformanceOverview(p$)
-
-    // TODO: kill matrix
-    // TODO: equipment value
-
-    return {
-      id,
-      matchId,
-      result,
-      map,
-      date,
-      team1,
-      team2,
-      event,
-      overview,
-      roundHistory,
-      playerStats,
-      performanceOverview
-    }
-  }
 
 export function getOverviewPropertyFromLabel(
   label: string
@@ -321,32 +313,10 @@ export function getStatsOverview($: HLTVPage) {
   return { ...teamStats, ...mostX } as any
 }
 
-export function getPlayerStats(m$: HLTVPage, p$: HLTVPage) {
-  const playerPerformanceStats = p$('.highlighted-player')
-    .toArray()
-    .reduce((map, el) => {
-      const graphData = el.find('.graph.small').attr('data-fusionchart-config')!
-      const { playerId, ...data } = {
-        playerId: Number(
-          el.find('.headline span a').attr('href')!.split('/')[2]
-        ),
-        killsPerRound: Number(
-          graphData.split('Kills per round: ')[1].split('"')[0]
-        ),
-        deathsPerRound: Number(
-          graphData.split('Deaths / round: ')[1].split('"')[0]
-        ),
-        impact: Number(graphData.split('Impact rating: ')[1].split('"')[0])
-      }
-
-      map[playerId] = data
-
-      return map
-    }, {} as Record<string, Partial<PlayerStats>>)
+export function getPlayerStats(m$: HLTVPage) {
 
   const getPlayerOverviewStats = (el: HLTVPageElement) => {
     const id = el.find('.st-player a').attrThen('href', getIdAt(3))!
-    const performanceStats = playerPerformanceStats[id]
     const rating = el.find('.st-rating').numFromText()
 
     return {
@@ -372,7 +342,6 @@ export function getPlayerStats(m$: HLTVPage, p$: HLTVPage) {
       ...(el.find('.st-rating .ratingDesc').text() === '2.0'
         ? { rating2: rating }
         : { rating1: rating }),
-      ...(performanceStats as any)
     }
   }
 
